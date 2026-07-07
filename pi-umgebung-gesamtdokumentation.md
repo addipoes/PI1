@@ -139,7 +139,7 @@ Der `input`-Handler prüft jeden Prompt auf Trigger-Keywords:
 | Prompt Injection | Referenz-Outputs in `<reference_outputs>` XML-Tags + `untrusted data`-Warnung |
 | Cost-DoS | Prompt ≤ 10.000 Zeichen |
 | API-Retry | im gemeinsamen Client (→ 2.8): 3 Versuche, exponentielles Backoff (1s/2s/4s), bei 429/502/503/504 |
-| Timeout | im gemeinsamen Client: 60s Hard-Timeout pro Versuch via `AbortSignal.timeout()` |
+| Timeout | im gemeinsamen Client: 120s Hard-Timeout pro Versuch via `AbortSignal.timeout()` |
 | Error Leakage | im gemeinsamen Client: Details via `console.error`, nur generische Meldung nach außen |
 | API-Key | via pi Model-Registry (`resolveApiKey`), Fallback `OPENROUTER_API_KEY` *(vorher nur env-Variable)* |
 
@@ -328,7 +328,7 @@ Vereint die vormals **duplizierten** `callModel`-Implementierungen aus fusion-sw
 | `callModel` | `(apiKey, model, messages, options?) → Promise<CallModelResult>` | Wirft nie; Fehler in `result.error` |
 | `resolveApiKey` | `(ctx?) → Promise<string \| undefined>` | pi Model-Registry, Fallback `OPENROUTER_API_KEY` |
 
-`CallModelOptions`: `temperature`, `maxTokens`, `reasoningEffort` (nur deepseek/glm/z-ai), `signal`, `timeoutMs` (Default 60s, **pro Versuch**), `maxRetries` (Default 3).
+`CallModelOptions`: `temperature`, `maxTokens`, `reasoningEffort` (nur deepseek/glm/z-ai), `signal`, `timeoutMs` (Default 120s, **pro Versuch** — *am 2026-07-07 von 60s erhöht: Funktionstest zeigte GLM-5.2-Latenzen >60s bei ~50% der Calls*), `maxRetries` (Default 3).
 
 #### Eigenschaften
 
@@ -613,6 +613,7 @@ User-Input
 6. **Kein Modell-Fallback:** Schlägt ein Modell fehl, gibt's keinen automatischen Ersatz. MoA fängt es pro Referenz. *(Update 2026-07-07: fusion_analyze und deliberate haben jetzt via gemeinsamem Client Retry bei transienten Fehlern (429/5xx) und Hard-Timeout; deliberate macht bei Phasen-Fehlern ab Phase 2 mit Teilergebnissen weiter. Ein Ersatz-**Modell** bei hartem Ausfall fehlt weiterhin.)*
 7. ~~**Lib-Import per relativem Pfad**~~ — *behoben 2026-07-07:* moa-enhanced liegt jetzt global neben der Lib (`~/.pi/agent/extensions/moa-enhanced/`), Import ist ein normales `../lib/openrouter-client`.
 8. **Kein echtes Thinking-Auto-Scaling:** `defaultThinkingLevel` ist statisch `medium`; die Spezial-Tools setzen high/xhigh pro API-Call. Dynamisches Hochschalten pro Prompt (z.B. bei Trigger-Keywords) bräuchte eine pi-Runtime-API zum Setzen des Thinking-Levels aus Extensions — derzeit nicht verfügbar/bekannt.
+9. **GLM-5.2-Latenz auf OpenRouter schwankt stark:** Funktionstest 2026-07-07 maß >60s bei ~50% der Calls (Marketplace-Routing). Client-Timeout deshalb auf 120s erhöht. Falls das Default-Modell im Alltag spürbar hängt: DeepSeek als Default zurück, GLM nur für moa/deliberate.
 
 ---
 
@@ -635,6 +636,26 @@ typescript@5.9.3
 ---
 
 ## 13. Changelog
+
+### 2026-07-07 (Nachtrag) — Funktionstest + Timeout 60s→120s
+
+Funktionstest in laufender pi-Session (via `pi -p`, Print-Mode):
+
+| Test | Ergebnis |
+|------|----------|
+| Session-Start: 16 Serena-Tools (11 Denylist), MoA geladen, 5 Strategien | ✅ |
+| moa mode=synthesize (GLM+DSv4 → Opus) | ✅ |
+| moa mode=analyze (Meta-Analyse mit Konsens/Widersprüche/Lücken) | ✅ |
+| moa `models`-Override | ✅ (Verdacht „Override ignoriert" widerlegt: der Lauf mit Override lief ohne GLM-Call durch; die GLM-Timeouts stammten aus Läufen ohne Override) |
+| serena_find_symbol | ✅ |
+| deliberate | ⚠️ nicht bewertbar: 3-4 sequenzielle Reasoning-Calls sprengen das Print-Mode-/Bash-Timeout — **in interaktiver TUI-Session nachtesten** |
+| /moa-Command | ⏭️ nur interaktiv testbar |
+
+**Konsequenz:** `DEFAULT_TIMEOUT_MS` im gemeinsamen Client von 60s auf **120s** erhöht — GLM 5.2 brauchte via OpenRouter-Marketplace bei ~50% der Calls >60s; der knappe Timeout kostete moa regelmäßig die GLM-Perspektive. (deliberate nutzt weiterhin 300s/Phase.)
+
+**Bekanntes Risiko dokumentiert (→ Problem 9):** GLM-5.2-Latenz auf OpenRouter schwankt stark; wenn das Default-Modell selbst hängt, hilft der Client-Timeout der Extensions nicht (pi's eigener Call-Pfad). Beobachten — falls Alltag leidet, DeepSeek als Default zurück und GLM nur als moa-/deliberate-Modell.
+
+---
 
 ### 2026-07-07 (Welle 3) — Serena-Denylist + GLM 5.2 als Default
 

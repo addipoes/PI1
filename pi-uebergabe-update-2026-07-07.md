@@ -27,7 +27,7 @@ Die serena-mcp-Extension filtert jetzt 11 Tools per Denylist: `read_file`, `list
 
 ## Weitere Änderungen
 
-**Gemeinsamer OpenRouter-Client (Welle 1):** `~/.pi/agent/extensions/lib/openrouter-client.ts`. Vertrag: `callModel(apiKey, model, messages[], options?) → Promise<{content, tokens, error?}>` — wirft nie, Fehler in `result.error`. Eingebaut: Retry mit Backoff (1s/2s/4s bei 429/5xx/Netzwerkfehler), Hard-Timeout pro Versuch (Default 60s, `timeoutMs`-Option; deliberate nutzt 300s/Phase), Reasoning-Effort für deepseek/glm/z-ai, Error-Hygiene (Details nur im Log, `[openrouter]`-Prefix). `resolveApiKey(ctx?)` löst den Key über pi's Model-Registry, Fallback `OPENROUTER_API_KEY`.
+**Gemeinsamer OpenRouter-Client (Welle 1):** `~/.pi/agent/extensions/lib/openrouter-client.ts`. Vertrag: `callModel(apiKey, model, messages[], options?) → Promise<{content, tokens, error?}>` — wirft nie, Fehler in `result.error`. Eingebaut: Retry mit Backoff (1s/2s/4s bei 429/5xx/Netzwerkfehler), Hard-Timeout pro Versuch (Default 120s — am 2026-07-07 von 60s erhöht, weil GLM 5.2 via OpenRouter bei ~50% der Calls >60s brauchte; deliberate nutzt 300s/Phase), Reasoning-Effort für deepseek/glm/z-ai, Error-Hygiene (Details nur im Log, `[openrouter]`-Prefix). `resolveApiKey(ctx?)` löst den Key über pi's Model-Registry, Fallback `OPENROUTER_API_KEY`.
 **Regel: Jeder neue OpenRouter-Call in einer Extension nutzt diesen Client — keine eigenen `fetch`-Aufrufe gegen openrouter.ai. In `lib/` keine `index.ts` anlegen (sonst lädt pi's Auto-Discovery sie als Extension).**
 
 **moa-enhanced ist umgezogen:** von `C:/AI/PI1/.pi/extensions/` nach global `~/.pi/agent/extensions/moa-enhanced/`. Grund: das globale Routing braucht das Tool in jedem Projekt; nebenbei ist der frühere laufwerksübergreifende Lib-Import weg (jetzt `../lib/openrouter-client`). Im Projekt PI1 liegt nur noch `.pi/skills/moa-skill/`.
@@ -42,19 +42,17 @@ Die serena-mcp-Extension filtert jetzt 11 Tools per Denylist: `read_file`, `list
 
 ## Verifikation / erste Schritte in dieser Session
 
-Alles ist per `tsc --noEmit` geprüft, alle JSONs validiert, der Strategie-Loader per Node-Smoke-Test bestätigt — aber noch **nicht in laufender pi-Session getestet**. Bitte einmal:
+**Funktionstest vom 2026-07-07 (Print-Mode) — Ergebnis:** Session-Start ✅ (16 Serena-Tools, MoA geladen, 5 Strategien), moa synthesize ✅, moa analyze ✅, `models`-Override ✅, serena_find_symbol ✅. Der Client-Timeout wurde daraufhin 60s→120s erhöht (GLM-Latenz). **Noch offen (nur interaktiv testbar):**
 
-1. Session-Start beobachten: Antwortet GLM 5.2 als Default? Meldet serena „Registered 16 tools … (11 per Denylist übersprungen)"? Lädt moa-enhanced aus dem globalen Pfad? Meldet fusion-switch fehlende Strategien? (Sollte nicht — 5 JSONs liegen bereit.)
-2. `deliberate` mit kleiner Aufgabe (beliebige Strategie) → alle Phasen ✅, Strategien aus JSON geladen?
-3. `moa` mit kurzem Prompt, einmal `mode="synthesize"`, einmal `mode="analyze"` → Opus-Antwort bzw. strukturierte Meta-Analyse?
-4. `/moa analyze` gefolgt von einem Prompt → wird moa erzwungen?
-5. Ein `serena_find_symbol`-Call → funktioniert die semantische Suche noch normal?
-6. Bei Fehlern: Konsolen-Log nach `[openrouter]` / `[fusion-switch]` / `[moa]` / `[serena-mcp]` durchsuchen.
+1. `deliberate` in einer TUI-Session (`/deliberate architecture` + Prompt) → alle 4 Phasen ✅? (Im Print-Mode nicht bewertbar — 3-4 sequenzielle Reasoning-Calls sprengen dessen Timeouts.)
+2. `/moa analyze` gefolgt von einem Prompt ohne Trigger-Keywords → wird moa mit mode=analyze erzwungen?
+3. Bei Fehlern: Konsolen-Log nach `[openrouter]` / `[fusion-switch]` / `[moa]` / `[serena-mcp]` durchsuchen.
 
 ## Offene Punkte
 
 - **Echtes Thinking-Auto-Scaling pro Prompt:** bräuchte eine pi-Runtime-API zum Setzen des Thinking-Levels aus Extensions — prüfen, ob pi das inzwischen anbietet.
 - `/consent off` und `/debug-vision on|off` Commands (auto-consent/debug-vision laufen immer).
 - Beobachten, ob die Serena-Denylist im Alltag ein Tool vermissen lässt → dann gezielt aus der Denylist nehmen (`serena-mcp/index.ts`, `TOOL_DENYLIST`).
+- **GLM-5.2-Latenz beobachten:** Am Testtag brauchten ~50% der Calls >60s (OpenRouter-Routing). Wenn das Default-Modell im Alltag spürbar hängt: DeepSeek als Default zurück, GLM nur für moa/deliberate.
 
 Vollständige Details: `C:/AI/PI1/pi-umgebung-gesamtdokumentation.md` — Abschnitt 13 (Changelog beider Wellen), 2.1 (deliberate/Strategien), 2.2 (moa v3), 2.8 (Client-API).
