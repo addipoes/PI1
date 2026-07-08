@@ -1,24 +1,51 @@
 # pi/HYDRA — Agent Harness für Text, Code & Infrastruktur
 
-> Optimierte Konzeptfassung · 2026-07-07  
-> Quellen: Damon ADE (Pat Simmons), pi/ADE, pi/MESH, pi/HYDRA (deliberate-Synthese), moa-Analyse
+> Optimierte Konzeptfassung v2 · 2026-07-07  
+> Reviews: deliberate (Architekt→Kritiker→Gegenentwurf→Synthesizer) + moa:analyze (GLM 5.2 + DeepSeek V4 Pro → Opus)  
+> Quellen: Damon ADE (Pat Simmons), pi/ADE, pi/MESH
 
 ---
 
-## 0. Executive Summary
+## 0. Strategische Vorfragen (vor jeder Architektur-Entscheidung)
+
+### 0.1 Für wen ist das?
+
+| Option | Konsequenzen |
+|--------|-------------|
+| **Personal Tool** (1 Dev, lokaler Rechner) | Kein Auth, kein Multi-Tenant, kein Cluster. `asyncio`-Tasks reichen. MVP in 4-6 Wo. |
+| **Team Platform** (3-10 Devs, geteilter Server) | Auth, Isolation, Queues, Monitoring nötig. Eher 15-20 Wo. |
+
+**Entscheidung steht aus.** Fast alle Architektur-Fragen (Actor-Cluster ja/nein, Sandbox-Typ, UI) hängen davon ab. **Vor Phase 1 klären.**
+
+### 0.2 Build vs. Adopt?
+
+Existierende Harnesses wurden nicht als Alternative geprüft:
+
+| Tool | Stärke | Schwäche für unseren Case |
+|------|--------|--------------------------|
+| **Aider** | Code-zentriert, Git-nativ, Multi-Model | Kein Infra/Text-Fokus, kein Agent-Profil-System |
+| **OpenHands** | Web-UI, Docker-Sandbox, Multi-Agent | Schwergewichtig, Python-Stack, nicht pi-nativ |
+| **Claude Code** | Exzellentes Coding, Terminal-nativ | Vendor-Lock-in, kein OpenRouter, keine eigenen Agents |
+| **pi selbst** | Extensions, Skills, OpenRouter | Kein Task-Board, keine Worktree-Isolation |
+
+**Fazit:** Kein bestehendes Tool deckt unseren Stack (pi + OpenRouter + moa/deliberate/sprint + Text/Code/Infra) ab. Eigenbau ist gerechtfertigt, aber der MVP muss sich an der Einfachheit von Aider/Claude Code messen lassen — nicht an der Komplexität von OpenHands.
+
+---
+
+## 1. Executive Summary
 
 **pi/HYDRA** ist eine Orchestrierungsschicht über dem bestehenden pi-Ökosystem. Sie löst zwei Kernprobleme:
 
 1. **Fragmentierung**: Statt verteilter Chat-Fenster (pi, Claude Code, Terminal) → eine zentrale Arbeitsumgebung
-2. **Kontext-Chaos**: Statt flüchtigem RAM-Kontext → strukturierte Sessions mit Git-Worktree-Isolation und RAG-Memory
+2. **Kontext-Chaos**: Statt flüchtigem RAM-Kontext → strukturierte Sessions mit Workspace-Isolation und durchsuchbarem Memory
 
 Anders als Damon ADE (YouTube/Content-Fokus) ist pi/HYDRA für **Textarbeit, Programmierung und Infrastruktur** optimiert. Anders als ein reines Tabs-Modell nutzt es ein **Hybrid aus interaktivem Fast-Path und asynchronem Actor-Path**.
 
 ---
 
-## 1. Architektur
+## 2. Architektur
 
-### 1.1 Dual-Path-Modell
+### 2.1 Dual-Path-Modell
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -43,22 +70,21 @@ Anders als Damon ADE (YouTube/Content-Fokus) ist pi/HYDRA für **Textarbeit, Pro
 │           │                            │                 │
 │           ▼                            ▼                 │
 │  ┌──────────────┐    ┌─────────────────────────────────┐ │
-│  │ WORKSPACE    │    │ ACTOR CLUSTER                   │ │
-│  │ MANAGER      │    │ (Supervision Tree)              │ │
-│  │              │    │                                 │ │
-│  │ Shared WS    │    │ Orchestrator → Architekt        │ │
-│  │ (Text/Infra) │    │             → Implementer       │ │
-│  │              │    │             → Reviewer          │ │
-│  │ Git-Worktree │    │             → RetroActor        │ │
-│  │ (Code-Tasks) │    │                                 │ │
+│  │ WORKSPACE    │    │ TASK RUNNER                     │ │
+│  │ MANAGER      │    │ (asyncio-Tasks + Timeouts,      │ │
+│  │              │    │  später: Celery/Redis)          │ │
+│  │ Shared WS    │    │                                 │ │
+│  │ (Text/Infra) │    │ Orchestrator → Architekt        │ │
+│  │              │    │             → Implementer       │ │
+│  │ Git-Worktree │    │             → Reviewer          │ │
+│  │ (Code-Tasks) │    │             → RetroActor        │ │
 │  └──────┬───────┘    └───────────────┬─────────────────┘ │
 │         │                            │                   │
 │         ▼                            ▼                   │
 │  ┌────────────────────────────────────────────────────┐  │
-│  │           EVENT BUS + RAG MEMORY                   │  │
-│  │  Append-only Event-Log (SQLite)                    │  │
-│  │  Vektor-Embeddings → semantische Queries           │  │
-│  │  Nie voll geladen, nur Top-K relevant              │  │
+│  │           MEMORY LAYER                              │  │
+│  │  SQLite/JSON-Historie (MVP) → RAG (später)         │  │
+│  │  Nie voll geladen, nur relevante Einträge           │  │
 │  └────────────────────────────────────────────────────┘  │
 │                         │                                 │
 │                         ▼                                 │
@@ -72,22 +98,32 @@ Anders als Damon ADE (YouTube/Content-Fokus) ist pi/HYDRA für **Textarbeit, Pro
 └─────────────────────────────────────────────────────────┘
 ```
 
-### 1.2 Fast-Path ↔ Actor-Path
+### 2.2 Fast-Path ↔ Actor-Path
 
 | Kriterium | Fast-Path | Actor-Path |
 |-----------|-----------|------------|
 | **UI** | Tabs (Kategorie → Agent → Tab) | Task Board (Submitted → In-Progress → Done) |
 | **Latenz** | <5s (direkte LLM-Antwort) | Minuten bis Stunden (Multi-Step) |
 | **Isolation** | Shared Workspace (RAM-Kontext) | Git-Worktree (physisch isoliert) |
-| **Memory** | Session-Kontext + minimale RAG-Query | Volles Event-Log + RAG |
-| **Fehler** | User sieht sofort | Supervision Tree restartet |
+| **Memory** | Session-Kontext + JSON-Historie | SQLite-Event-Log + Embedding-Suche (später) |
+| **Fehler** | User sieht sofort | Retry mit Timeout, User-Benachrichtigung |
 | **Typische Tasks** | "Erkläre X", "Schreibe Docstring" | "Implementiere OAuth2", "Refaktoriere Auth" |
+| **Approval** | Keiner (interaktiv) | Approval-Gates für destructive Actions |
+
+### 2.3 Was wir NICHT im MVP bauen
+
+- ❌ Supervision Trees mit Circuit-Breakern → einfache `asyncio`-Tasks mit Timeouts
+- ❌ Eigenes Actor-Framework → später Redis/NATS + Celery/Temporal
+- ❌ RAG mit Vektor-DB → SQLite/JSON-Historie reicht für MVP
+- ❌ Event Sourcing → zu schwergewichtig für Phase 1. JSON-Event-Log in SQLite.
+- ❌ Community Agent Registry → erst wenn intern stabil
+- ❌ Web-Dashboard → TUI first
 
 ---
 
-## 2. Agent-Typen
+## 3. Agent-Typen
 
-### 2.1 Kategorien (adaptiert für Text/Code/Infra)
+### 3.1 Kategorien
 
 ```
 📂 Text & Content
@@ -114,7 +150,7 @@ Anders als Damon ADE (YouTube/Content-Fokus) ist pi/HYDRA für **Textarbeit, Pro
   └── retro-agent         (moa:analyze → Memory-Updates, asynchron)
 ```
 
-### 2.2 Agent-Profil (Beispiel)
+### 3.2 Agent-Profil (Beispiel)
 
 ```yaml
 # ~/.pi/agents/code-architect/agent.yaml
@@ -123,173 +159,182 @@ category: "programming"
 description: "Architekturentscheidungen treffen, Systemdesign bewerten"
 
 competencies:
-  - serena:readonly       # Code analysieren, nicht editieren
+  - serena:readonly
   - deliberate:architecture
   - deliberate:debate
-  - moa:analyze           # Multi-Perspektiven-Analyse
+  - moa:analyze
 
 default_model: "anthropic/claude-opus-4.8"
 fallback_model: "z-ai/glm-5.2"
 
 memory_scope: "project"
-
-system_prompt: "agent.md"   # Identität & Arbeitsweise
+system_prompt: "agent.md"
 handoff_targets: ["implementer", "code-reviewer", "infra-planner"]
 ```
 
 ---
 
-## 3. Memory & State
+## 4. Memory & State
 
-### 3.1 Drei logische Tiers, eine technische Basis
+### 4.1 MVP: SQLite/JSON-Historie
 
-```
-┌────────────────────────────────────┐
-│ SESSION (pro Tab/Task)             │
-│ → In-Memory, serialisierbar        │
-│ → Wird bei Handoff übergeben       │
-├────────────────────────────────────┤
-│ PROJECT (<project>/.pi/memory/)    │
-│ → Entscheidungen (ADR-Format)      │
-│ → Konventionen, Patterns           │
-│ → RAG-queriable, nie voll geladen  │
-├────────────────────────────────────┤
-│ AGENT (~/.pi/agents/<agent>/)      │
-│ → agent.md: Identität & Style      │
-│ → memory.md: Gelernte Muster       │
-│ → Self-improving (asynchron)       │
-└────────────────────────────────────┘
-```
-
-### 3.2 Event-Log (technische Basis)
-
-Jede Aktion wird als Event gespeichert. Memory wird nicht "geladen" — sondern **semantisch abgefragt**:
+Jeder Task/Session produziert einen JSON-Eintrag. Kein RAG, keine Embeddings — einfache Datei-basierte Suche.
 
 ```json
-// events/2026-07-07/task-auth-001/004-decision.json
+// ~/.pi/hydra/memory/task-auth-001.json
 {
-  "event": "decision_made",
   "task": "task-auth-001",
-  "decision": "PKCE flow statt Implicit Grant",
-  "rationale": "Security-Audit fordert PKCE. Implicit Grant ist deprecated per OAuth 2.1.",
-  "actor": "code-architect",
-  "timestamp": "2026-07-07T15:30:00Z"
+  "agent": "implementer",
+  "timestamp": "2026-07-07T15:30:00Z",
+  "summary": "OAuth2 PKCE flow implemented in src/auth.py",
+  "decisions": [
+    {"what": "PKCE statt Implicit Grant", "why": "Security-Audit fordert PKCE, Implicit deprecated"}
+  ],
+  "files_changed": ["src/auth.py", "tests/test_auth.py"],
+  "status": "done"
 }
 ```
 
-**Query (RAG):** *"Warum haben wir PKCE gewählt?"* → Top-3 relevante Events in Kontext injiziert.
+### 4.2 Später: RAG (nur bei Bedarf)
 
-### 3.3 Self-Improving (asynchron, nie blockierend)
+Wenn SQLite/JSON-Suche nicht mehr reicht (>100 Einträge):
+- Embeddings via lokalem Modell (kein externer Service)
+- Vektor-Suche in SQLite (sqlite-vss)
+- Nur Top-K relevante Einträge in Kontext injiziert
+
+### 4.3 Self-Improving (asynchron, nie blockierend)
 
 ```
 Session endet
   → RetroActor subscribed auf Task-Events (Hintergrund)
-  → Analysiert Event-Log: Was lief gut? Wo gab's 3 Retries?
+  → Analysiert: Was lief gut? Wo gab's Retries?
   → Schreibt Erkenntnisse in agent/memory.md
-  → Erstellt Improvement-Vorschlag → User reviewed später
+  → User reviewed später
 ```
 
 ---
 
-## 4. Capability Negotiation
+## 5. Sicherheit
 
-Statt starrer Kompetenz-Bündel: **Default-Caps + Laufzeit-Anforderung**.
+### 5.1 Execution-Sandbox (MVP: Docker)
+
+Jeder Code/Infra-Task läuft in einem Docker-Container — kein direkter Host-Zugriff.
 
 ```
-ImplementerActor arbeitet an Code-Task
-  → Braucht browser-Capability für OAuth-Callback-Test
-  → browser nicht in initialen Caps → sendet CapabilityRequest
-  → User sieht in UI: "Implementer needs browser for: OAuth callback test. [Approve] [Deny]"
-  → User approved → Capability temporär gebunden
-  → Nach Task-Ende: Capability freigegeben
+Actor-Path-Task "Implementiere OAuth2"
+  → Workspace Manager erstellt Git-Worktree
+  → Task Runner startet Docker-Container mit Worktree-Volume
+  → ImplementerActor arbeitet IM Container
+  → ReviewerActor reviewed Diff von außen
+  → Merge nur nach Approval
 ```
+
+### 5.2 Approval-Gates (MVP: interaktiv)
+
+| Aktion | Approval |
+|--------|----------|
+| Code edit im Worktree | Keiner (isoliert) |
+| Merge Worktree → Main | User-Bestätigung |
+| Shell-Befehl im Container | Keiner (isoliert) |
+| Shell-Befehl auf Host | **User-Bestätigung + 2FA-artig: "BIST DU SICHER?"** |
+| `terraform apply` / `kubectl delete` | User-Bestätigung + Dry-Run-Vorschau |
+| Datei außerhalb Worktree löschen | **Immer blockiert** |
+
+### 5.3 Prompt Injection (strukturell)
+
+Referenz-Outputs von Agents werden immer in `<agent_output>`-Tags gekapselt und als untrusted markiert (gleicher Mechanismus wie moa-enhanced).
 
 ---
 
-## 5. Umsetzungsplan (optimiert)
+## 6. Kritische Design-Entscheidung: Merge-Strategie
 
-### Phase 1: MVP — Fast-Path (2 Wochen)
+**Das größte architektonische Risiko** (von GLM 5.2 identifiziert, von DeepSeek übersehen):
 
-**Ziel**: Interaktive Tabs mit Agent-Profilen laufen.
+Zwei Actors arbeiten parallel in isolierten Worktrees. Beide modifizieren `src/auth.py`. Was passiert beim Merge?
 
-- [ ] TUI-Shell (Tabs) als pi-Extension
-- [ ] Agent Registry (Pydantic-validiert, 5 Basis-Agenten)
-- [ ] Model-Picker (OpenRouter, bestehend)
-- [ ] Shared Workspace für Text-Tasks
-- [ ] **Nicht**: Actor-System, Git-Worktrees, RAG — das kommt später
+```
+Worktree A: Refactored login() → neue Signatur
+Worktree B: Fügt MFA zu login() hinzu → alte Signatur
+Merge: KONFLIKT
+```
 
-**Lieferbar**: User kann Agenten-Profil wählen und interaktiv arbeiten.
+**Strategie: Sequentiell, nicht parallel (MVP)**
 
-### Phase 2: Event-Infrastruktur (2 Wochen)
+- Actor-Path-Tasks für dasselbe Modul werden **sequentiell** abgearbeitet
+- Task B startet erst, wenn Task A gemerged ist
+- Parallele Tasks nur für **disjunkte** Module (Auth ≠ Frontend)
+- Kein Auto-Merge-Resolver — Konflikte sind bewusst manuell
 
-- [ ] Append-only Event-Store (SQLite)
-- [ ] Basis-Event-Typen (TaskSubmitted, DecisionMade, CodeModified)
-- [ ] Vektor-Embeddings + RAG-Query (lokal, kein externer Service)
-- [ ] Project-Memory als RAG-queriable Sammlung
-
-### Phase 3: Workspace-Isolation (2 Wochen)
-
-- [ ] Git-Worktree-Manager (create/review/merge/cleanup)
-- [ ] Actor-Path-Trigger: Code-Task → Worktree statt Shared
-- [ ] Basis-Merge-Workflow (kein Auto-Resolver)
-
-### Phase 4: Actor-System (3 Wochen)
-
-- [ ] Basis-Actor-Framework (asyncio, Mailbox, Receive-Loop)
-- [ ] OrchestratorActor, ImplementerActor, ReviewerActor
-- [ ] Capability-Request-Protokoll + UI
-- [ ] Supervision Tree (Timeouts, Circuit-Breaker)
-
-### Phase 5: Retro + Sharing (2 Wochen)
-
-- [ ] RetroActor (asynchron, Event-Log-Analyse)
-- [ ] Agent-Template-Export/Import (GitHub)
-- [ ] Sandboxing für importierte Skills (AST-Validation)
-
-**Gesamt**: 11 Wochen (optimistisch) bis 14 Wochen (realistisch mit Puffer).
+Das begrenzt Parallelität, eliminiert aber die häufigste Fehlerquelle.
 
 ---
 
-## 6. Risiko-Matrix
+## 7. Risiko-Matrix
 
 | # | Risiko | Impact | Wahrsch. | Mitigation |
 |---|--------|:---:|:---:|---|
-| 1 | **Komplexitätsspirale**: Hybrid aus Tabs + Task-Board wird unübersichtlich | Hoch | Mittel | MVP nur Tabs (Phase 1). Task-Board erst ab Phase 4. User testet schrittweise. |
-| 2 | **Fast-Path-Memory-Divergenz**: Fast-Path umgeht RAG → anderes Memory als Actor-Path → Inkonsistenz | Mittel | Hoch | Fast-Path nutzt minimale RAG-Query (Top-3 Events, <500ms). Gleicher Event-Store. |
-| 3 | **GLM 5.2 Latenz**: Default-Modell unzuverlässig → Fast-Path nicht "fast" | Mittel | Mittel | Fallback auf DeepSeek V4 Pro. Timeout-Erkennung + Auto-Switch. |
+| 1 | **Merge-Hölle**: Parallele Worktree-Tasks erzeugen Konflikte | Hoch | Mittel | Sequentiell pro Modul (MVP). Kein Auto-Merge. |
+| 2 | **UX-Bruch TUI/Async**: Tabs (synchron) + Task-Board (asynchron) in einer TUI verwirrt | Mittel | Hoch | In Tabs starten, Task-Board erst ab Phase 3. DeepSeek hat recht: langfristig Web-UI. |
+| 3 | **Komplexitätsspirale**: MVP wächst unkontrolliert → Over-Engineering | Hoch | Mittel | MVP radikal beschneiden. Abbruchkriterium nach jeder Phase. |
+| 4 | **Prompt Injection in Agents**: Actor führt schädlichen Code aus | Kritisch | Niedrig | Docker-Sandbox + Approval-Gates + Output-Tagging |
+| 5 | **GLM 5.2 Latenz**: Default-Modell unzuverlässig → Fast-Path nicht "fast" | Mittel | Mittel | Fallback DeepSeek. Timeout-Erkennung + Auto-Switch. |
 
 ---
 
-## 7. Bewertung: Over-Engineering?
+## 8. Umsetzungsplan
 
-**Nein, aber phasenweise Einführung ist kritisch.**
+### Phase 1: MVP — Fast-Path (3-4 Wochen)
 
-Der Fehler wäre, alle 5 Phasen vor dem ersten User-Test zu bauen. Stattdessen:
+**Ziel**: Interaktive Tabs mit Agent-Profilen laufen. Kein Actor-Path.
 
-1. **Phase 1 allein** liefert bereits Mehrwert (strukturierte Agent-Tabs statt Chaos)
-2. **Phasen 2-3** adressieren echte Schmerzpunkte (Memory, Code-Isolation)
-3. **Phasen 4-5** sind "nice to have" — nur bauen wenn Phase 1-3 sich bewährt
+- [ ] TUI-Shell (Tabs) als pi-Extension
+- [ ] Agent Registry (Pydantic-validiert, 3 Basis-Agenten: Text, Code, Infra)
+- [ ] Model-Picker (OpenRouter, bestehend)
+- [ ] Shared Workspace
+- [ ] **Nicht**: Actor-System, Git-Worktrees, RAG, Docker-Sandbox
 
-Das Hybrid-Modell klingt komplex, ist aber in der Praxis simpler als die Alternative (reiner Actor-Path für alles). Der Fast-Path verhindert, dass triviale Tasks den vollen Actor-Overhead zahlen.
+**Abbruchkriterium**: Wenn Tabs nicht spürbar besser als rohes pi → Konzept überdenken.
+
+### Phase 2: Workspace-Isolation (2-3 Wochen)
+
+- [ ] Git-Worktree-Manager (create/review/merge/cleanup)
+- [ ] Docker-Sandbox für Code-Tasks
+- [ ] Approval-Gates für Merge
+- [ ] SQLite/JSON-Memory
+
+### Phase 3: Asynchrone Tasks (3-4 Wochen)
+
+- [ ] Task-Board-UI
+- [ ] `asyncio`-basierte Task-Ausführung mit Timeouts
+- [ ] Sequentiell pro Modul, parallel für disjunkte Module
+- [ ] Retry-Logik (max 3x, dann User-Benachrichtigung)
+
+### Phase 4: Actor-Intelligenz (3-4 Wochen)
+
+- [ ] OrchestratorActor, ImplementerActor, ReviewerActor
+- [ ] Capability-Request-Protokoll + UI
+- [ ] RetroActor (asynchron, Memory-Updates)
+- [ ] Redis/NATS für Task-Queue (ersetzt reines asyncio)
+
+### Phase 5: Produktion (optional, fortlaufend)
+
+- [ ] RAG (Embedding-Suche statt JSON)
+- [ ] Web-Dashboard
+- [ ] Agent-Template-Sharing (GitHub)
+- [ ] Multi-User (falls Team-Platform-Entscheidung)
+
+**Gesamt realistische Schätzung: 13-19 Wochen** (nicht 11).
 
 ---
 
-## 8. Was wir NICHT bauen (bewusste Auslassungen)
+## 9. Zusammenfassung
 
-- ❌ **Eigenes Actor-Framework von Grund auf** — Leichtgewichtige asyncio-Implementierung reicht
-- ❌ **Community Agent Registry** (Phase 5) — Erst wenn interne Agents stabil
-- ❌ **Web-Dashboard** — TUI first, Web ist optionale Spätphase
-- ❌ **Auto-Merge-Resolver** — Merge-Konflikte sind bewusst manuell (User-Entscheidung)
-- ❌ **Vollständiges RAG-System mit externer Vektor-DB** — Lokale Embeddings (SQLite + sqlite-vss) reichen
+**pi/HYDRA ist gerechtfertigt, aber der MVP muss sich radikal beschneiden lassen.**
 
----
+Der größte Wert liegt in **Phase 1 allein**: strukturierte Agent-Tabs mit Profilen, Model-Picker, Shared Workspace. Das eliminiert das Chat-Fenster-Chaos ohne eine Zeile Actor-Code.
 
-## 9. Nächster Schritt
-
-**Phase 1 starten**: pi-Extension `pi-hydra` mit Tabs + Agent-Registry + Model-Picker.  
-Aufsetzpunkt: `~/.pi/agent/extensions/pi-hydra/index.ts` (analog zu moa-enhanced).  
-Skills liegen in `~/.pi/agents/` als YAML + MD.
+Alles darüber hinaus (Worktrees, asynchrone Tasks, RAG) nur bauen, wenn Phase 1 sich im Alltag bewährt hat.
 
 ---
 
-*Dokument versioniert in: C:/AI/PI1/pi-hydra-konzept.md*
+*Review-Stats: 2 Modelle, 0 Widersprüche, 5 blinde Flecken identifiziert, 4 strategische Lücken geschlossen.*
