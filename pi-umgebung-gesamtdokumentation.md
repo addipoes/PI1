@@ -125,7 +125,7 @@ Der `input`-Handler prüft jeden Prompt auf Trigger-Keywords:
 
 | Parameter | Typ | Default | Beschreibung |
 |-----------|-----|---------|-------------|
-| `prompt` | String (max 10k) | Pflicht | Die Frage |
+| `prompt` | String (max 40k Zeichen, *2026-07-08 von 10k erhöht*) | Pflicht | Die Frage |
 | `refine` | Boolean | `false` *(seit 2026-07-07, vorher `true`)* | `true` = Paper-Modus (2 Runden Peer-Refinement, ~50% teurer), `false` = Fast-Modus (1 Runde) |
 | `models` | String[] (max 4) | GLM 5.2 + DSv4 Pro | *(neu 2026-07-07)* Referenz-Modelle überschreiben — z.B. Frontier-Panel Opus+GPT+Gemini (früheres „Fusion"-Setup, deutlich teurer) |
 | `mode` | `"synthesize"` \| `"analyze"` | `synthesize` | *(neu 2026-07-07)* synthesize = Opus schreibt beste Antwort; analyze = strukturierte Meta-Analyse |
@@ -137,7 +137,7 @@ Der `input`-Handler prüft jeden Prompt auf Trigger-Keywords:
 | Schutz | Implementierung |
 |--------|----------------|
 | Prompt Injection | Referenz-Outputs in `<reference_outputs>` XML-Tags + `untrusted data`-Warnung |
-| Cost-DoS | Prompt ≤ 10.000 Zeichen |
+| Cost-DoS | Prompt ≤ 40.000 Zeichen, max 4 Referenz-Modelle |
 | API-Retry | im gemeinsamen Client (→ 2.8): 3 Versuche, exponentielles Backoff (1s/2s/4s), bei 429/502/503/504 |
 | Timeout | im gemeinsamen Client: 120s Hard-Timeout pro Versuch via `AbortSignal.timeout()` |
 | Error Leakage | im gemeinsamen Client: Details via `console.error`, nur generische Meldung nach außen |
@@ -644,6 +644,8 @@ Interaktiver TUI-Test: **deliberate ✅** (alle Phasen, damit ist die komplette 
 **Fixes:**
 - `openrouter-client.ts`: Leerer `content` ist jetzt ein **Fehler** (`error: "Leere Antwort … Token-Budget vermutlich durch Reasoning aufgebraucht"`, finish_reason im Log) statt Pseudo-Inhalt — moa's Fehlerpfad greift damit korrekt.
 - `moa-enhanced`: Referenz-maxTokens **2500 → 6000** (Kosten unkritisch: ~$0.005–0.017 pro Referenz).
+
+**Kapazitäts-Erhöhung für große Konzepte** (gleicher Tag): Aggregator-maxTokens **4096 → 8192** (große Synthesen wurden sonst still abgeschnitten; Max-Kosten ~$0.20/Call) und Prompt-Limit **10k → 40k Zeichen** (Input ist der billige Teil; der Guard bleibt gegen versehentliche Riesen-Dumps). Hinweis zur Einordnung: Für Repo-Reviews ist moa unabhängig von Limits ungeeignet — Referenz-Modelle haben keinen Tool-/Dateizugriff; das macht der Haupt-Agent oder Sprint-Loop, moa/deliberate urteilen über das Kondensat.
 
 Gilt ab dem nächsten pi-Session-Start.
 
