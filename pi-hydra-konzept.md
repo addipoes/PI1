@@ -1,3 +1,5 @@
+> **⚠ Archiv-Stand (2026-07-08):** Die Weiterentwicklung dieses Konzepts lebt in `C:/AI/hydra/KONZEPT.md` (eigenes Repo). Diese Kopie wird nicht mehr gepflegt.
+
 # pi/HYDRA — Agent Harness für Text, Code & Infrastruktur
 
 > Optimierte Konzeptfassung v2 · 2026-07-07  
