@@ -130,7 +130,7 @@ Der `input`-Handler prüft jeden Prompt auf Trigger-Keywords:
 | `models` | String[] (max 4) | GLM 5.2 + DSv4 Pro | *(neu 2026-07-07)* Referenz-Modelle überschreiben — z.B. Frontier-Panel Opus+GPT+Gemini (früheres „Fusion"-Setup, deutlich teurer) |
 | `mode` | `"synthesize"` \| `"analyze"` | `synthesize` | *(neu 2026-07-07)* synthesize = Opus schreibt beste Antwort; analyze = strukturierte Meta-Analyse |
 
-**Referenz-Calls:** maxTokens 2500 *(vorher 1500 — abgeschnittene Referenzen verschlechterten die Synthese)*, reasoningEffort `high` (wirkt nur bei GLM/DeepSeek).
+**Referenz-Calls:** maxTokens 6000 *(2026-07-08 von 2500 erhöht: Reasoning-Modelle verbrauchen ihr Budget zuerst fürs Thinking — DeepSeek lieferte bei 2500+effort=high eine leere Antwort)*, reasoningEffort `high` (wirkt nur bei GLM/DeepSeek).
 
 #### Sicherheits-Features
 
@@ -636,6 +636,18 @@ typescript@5.9.3
 ---
 
 ## 13. Changelog
+
+### 2026-07-08 — Leere-Referenz-Fix (Reasoning-Budget)
+
+Interaktiver TUI-Test: **deliberate ✅** (alle Phasen, damit ist die komplette Checkliste bestanden). moa lief nach Session-Neustart ohne Timeout (120s aktiv), aber DeepSeek lieferte eine **leere Referenz**: Reasoning-Modelle verbrauchen das max_tokens-Budget zuerst fürs Thinking — bei 2500 Tokens + effort=high blieb kein Text übrig (`content: null`, finish_reason `length`). Der Client reichte „(leere Antwort)" als gültige Referenz weiter; der analyze-Modus wies das immerhin ehrlich aus.
+
+**Fixes:**
+- `openrouter-client.ts`: Leerer `content` ist jetzt ein **Fehler** (`error: "Leere Antwort … Token-Budget vermutlich durch Reasoning aufgebraucht"`, finish_reason im Log) statt Pseudo-Inhalt — moa's Fehlerpfad greift damit korrekt.
+- `moa-enhanced`: Referenz-maxTokens **2500 → 6000** (Kosten unkritisch: ~$0.005–0.017 pro Referenz).
+
+Gilt ab dem nächsten pi-Session-Start.
+
+---
 
 ### 2026-07-07 (Nachtrag) — Funktionstest + Timeout 60s→120s
 

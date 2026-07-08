@@ -36,7 +36,7 @@ Die serena-mcp-Extension filtert jetzt 11 Tools per Denylist: `read_file`, `list
 
 **Thinking-Level:** `defaultThinkingLevel` ist jetzt `medium` (vorher `xhigh` — traf jeden trivialen Prompt, größter Kostenposten). Die Qualitätspfade holen sich Tiefe selbst: deliberate-Phasen high/xhigh (per Strategie-JSON), moa-Referenzen high. Wenn ein einzelner normaler Prompt maximale Reasoning-Tiefe braucht: Thinking-Level manuell hochschalten oder deliberate/moa nutzen.
 
-**Kosten-Defaults:** `moa` läuft mit `refine=false` (1 Referenz-Runde; `refine=true` nur bei explizitem Qualitätsanspruch, ~50% teurer). Referenz-maxTokens 2500. Verifizierte Preise (OpenRouter-Liste, 2026-07-07, In/Out pro 1M): DeepSeek V4 Pro $0.435/$0.87 · GLM 5.2 $0.91/$2.86 · Opus 4.8 $5/$25.
+**Kosten-Defaults:** `moa` läuft mit `refine=false` (1 Referenz-Runde; `refine=true` nur bei explizitem Qualitätsanspruch, ~50% teurer). Referenz-maxTokens 6000 (am 2026-07-08 von 2500 erhöht — Reasoning-Modelle brauchen Budget fürs Thinking, sonst leere Antworten; leere Antworten meldet der Client seither als Fehler). Verifizierte Preise (OpenRouter-Liste, 2026-07-07, In/Out pro 1M): DeepSeek V4 Pro $0.435/$0.87 · GLM 5.2 $0.91/$2.86 · Opus 4.8 $5/$25.
 
 **Bug-Fixes (Welle 1):** Die Trigger-Keywords `trade.off`/`vor.-.nachteil` matchten nie (Regex-Syntax im Literal-Vergleich) — gefixt; erwarte mehr Auto-Detect-Dialoge bei Trade-off-/Entscheidungs-Prompts (`/deepthink off` schaltet ab). Der wirkungslose `analysis_models`-Parameter wurde entfernt. Fehlermeldungen der Tools enthalten keine rohen API-Antworten mehr — Details im Konsolen-Log unter `[openrouter]`.
 
